@@ -94,13 +94,16 @@ const performanceChartData = computed(() => {
   });
 });
 
-const barChartData = computed(() => ({
-  labels: performanceChartData.value.map(d => d.name.split(' ')[0]),
-  datasets: [
-    { label: 'Selesai Tepat Waktu', backgroundColor: '#2E7D32', data: performanceChartData.value.map(d => d.tepatWaktu) },
-    { label: 'Terlambat (Miss SLA)', backgroundColor: '#EF4444', data: performanceChartData.value.map(d => d.terlambat) },
-  ]
-}));
+const barChartData = computed(() => {
+  const chartData = performanceChartData.value || [];
+  return {
+    labels: chartData.map(d => d && d.name ? d.name.split(' ')[0] : 'Teknisi'),
+    datasets: [
+      { label: 'Selesai Tepat Waktu', backgroundColor: '#2E7D32', data: chartData.map(d => d ? d.tepatWaktu : 0) },
+      { label: 'Terlambat (Miss SLA)', backgroundColor: '#EF4444', data: chartData.map(d => d ? d.terlambat : 0) },
+    ]
+  };
+});
 
 const barChartOptions = {
   responsive: true,

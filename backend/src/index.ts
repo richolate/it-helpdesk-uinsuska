@@ -526,9 +526,76 @@ app.get('/api/performance', async (req, res) => {
   }
 });
 
+async function seedDatabase() {
+  try {
+    const userList = await db.select().from(users);
+    if (userList.length === 0) {
+      console.log('🌱 Database is empty. Seeding default dummy users...');
+      
+      const seedUsers = [
+        {
+          nimNip: '12001',
+          name: 'Budi Siregar',
+          email: 'budi.siregar@student.uin-suska.ac.id',
+          passwordHash: 'mahasiswa1',
+          role: 'Mahasiswa',
+          phone: '081234567801'
+        },
+        {
+          nimNip: '13001',
+          name: 'Bagus Hartono',
+          email: 'bagus.hartono@uin-suska.ac.id',
+          passwordHash: 'dosen123',
+          role: 'Dosen',
+          phone: '081234567802'
+        },
+        {
+          nimNip: '14001',
+          name: 'Agus Salim',
+          email: 'agus.salim@uin-suska.ac.id',
+          passwordHash: 'admin123',
+          role: 'Admin IT',
+          phone: '081234567803'
+        },
+        {
+          nimNip: '15001',
+          name: 'Roni Wijaya',
+          email: 'roni.wijaya@uin-suska.ac.id',
+          passwordHash: 'teknisi123',
+          role: 'Teknisi',
+          specialty: 'Jaringan',
+          phone: '081234567804',
+          telegramRegCode: 'REG-15001'
+        },
+        {
+          nimNip: '15002',
+          name: 'Doni Setiawan',
+          email: 'doni.setiawan@uin-suska.ac.id',
+          passwordHash: 'teknisi123',
+          role: 'Teknisi',
+          specialty: 'Perangkat',
+          phone: '081234567805',
+          telegramRegCode: 'REG-15002'
+        }
+      ];
+
+      for (const u of seedUsers) {
+        await db.insert(users).values(u);
+      }
+      console.log('✅ Seeding completed successfully!');
+    }
+  } catch (error) {
+    console.error('❌ Failed to seed database:', error);
+  }
+}
+
 // Start HTTP and WebSocket Server
-server.listen(port, () => {
+server.listen(port, async () => {
   console.log(`🚀 Server ready at http://localhost:${port}`);
+  
+  // Seed database with dummy accounts if empty
+  await seedDatabase();
+  
   // Start Telegram Bot
   startBot();
 });

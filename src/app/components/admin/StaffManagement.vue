@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { UserPlus, Copy, CheckCircle2, User, Phone, Briefcase, Network, Monitor, MonitorPlay, MoreHorizontal } from "lucide-vue-next";
+import { useNotificationStore } from "@/stores/useNotificationStore";
 
 // State
 const staffList = ref<any[]>([]);
@@ -22,6 +23,7 @@ const staffToDelete = ref<any>(null);
 
 // Form
 const currentView = ref<'list'|'add'>('list');
+const notifStore = useNotificationStore();
 const nimNip = ref('');
 const name = ref('');
 const email = ref('');
@@ -61,14 +63,27 @@ const confirmDeleteStaff = async () => {
     const data = await res.json();
     if (data.success) {
       isDeleteModalOpen.value = false;
+      notifStore.addNotification({
+        title: 'Pegawai Berhasil Dihapus',
+        message: `Pegawai ${staffToDelete.value.name} telah dihapus dari sistem.`,
+        type: 'success'
+      });
       staffToDelete.value = null;
       fetchStaff();
     } else {
-      alert('Gagal menghapus pegawai: ' + data.error);
+      notifStore.addNotification({
+        title: 'Gagal Menghapus Pegawai',
+        message: data.error || 'Terjadi kesalahan.',
+        type: 'error'
+      });
     }
   } catch (e) {
     console.error(e);
-    alert('Terjadi kesalahan saat menghapus pegawai.');
+    notifStore.addNotification({
+      title: 'Terjadi Kesalahan',
+      message: 'Koneksi ke server gagal.',
+      type: 'error'
+    });
   } finally {
     isDeleting.value = false;
   }
@@ -97,13 +112,30 @@ const handleAddStaff = async () => {
       if (data.telegramRegCode) {
         generatedRegCode.value = data.telegramRegCode;
         successModalOpen.value = true;
+      } else {
+        notifStore.addNotification({
+          title: 'Pegawai Berhasil Ditambahkan',
+          message: `Pegawai ${name.value} (${nimNip.value}) telah didaftarkan ke sistem.`,
+          type: 'success'
+        });
       }
       fetchStaff(); // refresh
       // Reset form
       nimNip.value = ''; name.value = ''; email.value = ''; role.value = ''; specialty.value = ''; phone.value = '';
+    } else {
+      notifStore.addNotification({
+        title: 'Gagal Menambahkan Pegawai',
+        message: data.error || 'Terjadi kesalahan pada server.',
+        type: 'error'
+      });
     }
   } catch (e) {
     console.error(e);
+    notifStore.addNotification({
+      title: 'Koneksi Gagal',
+      message: 'Gagal menghubungi server backend.',
+      type: 'error'
+    });
   } finally {
     isSubmitting.value = false;
   }
