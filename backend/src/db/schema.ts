@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, integer } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // Users Table
@@ -21,6 +21,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   ticketsAssigned: many(tickets, { relationName: 'assignee' }),
   comments: many(comments),
   auditLogs: many(auditLogs),
+  articles: many(articles),
 }));
 
 // Tickets Table
@@ -55,6 +56,7 @@ export const ticketsRelations = relations(tickets, ({ one, many }) => ({
   }),
   comments: many(comments),
   auditLogs: many(auditLogs),
+  relatedArticles: many(articles),
 }));
 
 // Comments Table
@@ -93,6 +95,53 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   }),
   user: one(users, {
     fields: [auditLogs.userId],
+    references: [users.id],
+  }),
+}));
+
+// Articles Table
+export const articles = pgTable('articles', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  coverImage: text('cover_image'),
+  title: varchar('title', { length: 255 }).notNull(),
+  content: text('content').notNull(),
+  category: varchar('category', { length: 50 }).notNull(), // 'Jaringan', 'Akun', 'Perangkat', 'Software', 'Infrastruktur'
+  tags: text('tags'), // Comma-separated tags, e.g. "WiFi, Network, Connection"
+  relatedIncidentId: varchar('related_incident_id', { length: 20 }).references(() => tickets.id),
+  status: varchar('status', { length: 20 }).default('Draft').notNull(), // 'Draft', 'Published'
+  views: integer('views').default(0).notNull(),
+  authorId: uuid('author_id').references(() => users.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const articlesRelations = relations(articles, ({ one, many }) => ({
+  author: one(users, {
+    fields: [articles.authorId],
+    references: [users.id],
+  }),
+  relatedIncident: one(tickets, {
+    fields: [articles.relatedIncidentId],
+    references: [tickets.id],
+  }),
+  viewsLog: many(articleViews),
+}));
+
+// Article Views Table (for 1 account 1x view)
+export const articleViews = pgTable('article_views', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  articleId: uuid('article_id').references(() => articles.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const articleViewsRelations = relations(articleViews, ({ one }) => ({
+  article: one(articles, {
+    fields: [articleViews.articleId],
+    references: [articles.id],
+  }),
+  user: one(users, {
+    fields: [articleViews.userId],
     references: [users.id],
   }),
 }));

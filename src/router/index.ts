@@ -41,6 +41,7 @@ const router = createRouter({
         { path: 'tickets', redirect: '/user/my-tickets' },
         { path: 'tickets/:id', component: () => import('../app/components/user/UserTicketDetail.vue') },
         { path: 'knowledge-base', component: KnowledgeBase },
+        { path: 'knowledge/view/:id', component: () => import('../app/components/shared/KnowledgeReader.vue') },
       ],
     },
     {
@@ -52,6 +53,8 @@ const router = createRouter({
         { path: 'tickets', component: TicketManagement },
         { path: 'tickets/:id', component: () => import('../app/components/admin/TicketDetail.vue') },
         { path: 'knowledge', component: KnowledgeManagement },
+        { path: 'knowledge/editor/:id?', component: () => import('../app/components/admin/KnowledgeEditor.vue') },
+        { path: 'knowledge/view/:id', component: () => import('../app/components/shared/KnowledgeReader.vue') },
         { path: 'performance', component: StaffPerformance },
         { path: 'staff', component: StaffManagement },
         { path: 'settings', component: AdminSettings },

@@ -1,124 +1,252 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, Plus, BookOpen, Edit, Trash2, Eye, TrendingUp, CheckCircle, FileWarning, AlertTriangle } from "lucide-vue-next";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription, 
+  DialogFooter 
+} from "@/components/ui/dialog";
+import { 
+  Search, 
+  Plus, 
+  BookOpen, 
+  Edit, 
+  Trash2, 
+  Eye, 
+  CheckCircle, 
+  FileWarning, 
+  AlertTriangle,
+  Loader2,
+  Calendar,
+  Sparkles
+} from "lucide-vue-next";
+import { useNotificationStore } from '@/stores/useNotificationStore';
 
-const createDialogOpen = ref(false);
+const router = useRouter();
+const notificationStore = useNotificationStore();
+
 const isLoading = ref(true);
+const isDeleting = ref<string | null>(null);
 
-setTimeout(() => {
-  isLoading.value = false;
-}, 1000);
+// Confirmation state
+const showDeleteDialog = ref(false);
+const articleIdToDelete = ref<string | null>(null);
 
-const knowledgeArticles = [
-  {
-    id: "KB-001",
-    title: "Cara mengatasi tidak bisa connect ke WiFi kampus",
-    category: "Jaringan",
-    status: "Published",
-    author: "Ahmad Subhan",
-    createdDate: "01 Mar 2026",
-    updatedDate: "15 Mar 2026",
-    views: 1254,
-    helpful: 98,
-    tags: ["WiFi", "Network", "Connection"],
-    content: "Langkah-langkah troubleshooting WiFi kampus...",
-    relatedTickets: 45,
-  },
-  {
-    id: "KB-002",
-    title: "Reset password akun iRaise",
-    category: "Akun & Password",
-    status: "Published",
-    author: "Siti Nurhaliza",
-    createdDate: "05 Mar 2026",
-    updatedDate: "20 Mar 2026",
-    views: 892,
-    helpful: 95,
-    tags: ["Password", "Account", "iRaise"],
-    content: "Panduan lengkap reset password iRaise...",
-    relatedTickets: 32,
-  },
-  {
-    id: "KB-003",
-    title: "Troubleshooting laptop tidak terdeteksi di jaringan",
-    category: "Perangkat",
-    status: "Published",
-    author: "Budi Santoso",
-    createdDate: "10 Mar 2026",
-    updatedDate: "25 Mar 2026",
-    views: 643,
-    helpful: 88,
-    tags: ["Laptop", "Network", "Device Registration"],
-    content: "Solusi untuk masalah device registration...",
-    relatedTickets: 28,
-  },
-  {
-    id: "KB-004",
-    title: "Setup VPN untuk akses dari luar kampus",
-    category: "Jaringan",
-    status: "Draft",
-    author: "Ahmad Subhan",
-    createdDate: "28 Mar 2026",
-    updatedDate: "02 Apr 2026",
-    views: 0,
-    helpful: 0,
-    tags: ["VPN", "Remote Access", "Security"],
-    content: "Panduan instalasi dan konfigurasi VPN...",
-    relatedTickets: 0,
-  },
-];
+const knowledgeArticles = ref<any[]>([]);
+const incidentRepository = ref<any[]>([]);
 
-// Incident Repository - dari tiket yang ditandai sebagai incident
-const incidentRepository = [
-  {
-    id: "INC-001",
-    ticketId: "#1240",
-    title: "Database Server Down - Disk Space Full",
-    category: "Infrastruktur",
-    severity: "Critical",
-    resolution: "Cleanup old log files, expand disk partition, implement auto-cleanup script",
-    rootCause: "Log files tidak pernah di-rotate, monitoring disk space tidak aktif",
-    preventiveAction: "Setup log rotation policy, implement disk space monitoring alert",
-    incidentNotes: "Major incident - Database crash karena disk space penuh. Sudah ditangani dengan cleanup dan monitoring.",
-    createdBy: "Ahmad Subhan",
-    createdDate: "04 Apr 2026",
-    resolvedDate: "04 Apr 2026",
-    downtime: "6 jam",
-    affectedUsers: 500,
-  },
-  {
-    id: "INC-002",
-    ticketId: "#1156",
-    title: "Network Outage Gedung Utama - Core Switch Failure",
-    category: "Jaringan",
-    severity: "High",
-    resolution: "Replace failed core switch, restore configuration from backup",
-    rootCause: "Hardware failure pada core switch, tidak ada redundancy",
-    preventiveAction: "Implement redundant core switch, setup failover mechanism",
-    incidentNotes: "Jaringan gedung utama down total. Switch utama rusak dan harus diganti. Konfigurasi di-restore dari backup.",
-    createdBy: "Budi Santoso",
-    createdDate: "28 Mar 2026",
-    resolvedDate: "29 Mar 2026",
-    downtime: "18 jam",
-    affectedUsers: 800,
-  },
-];
+// Filter state
+const searchQuery = ref('');
+const selectedCategory = ref('all-category');
+const selectedStatus = ref('all-status');
 
-const stats = [
-  { label: "Total Articles", value: knowledgeArticles.length, change: "+2" },
-  { label: "Published", value: knowledgeArticles.filter((a) => a.status === "Published").length, change: "+1" },
-  { label: "Incidents Recorded", value: incidentRepository.length, change: "+1" },
-  { label: "Avg Helpfulness", value: "94%", change: "+3%" },
-];
+// WebSocket Reference
+let ws: WebSocket | null = null;
+let reconnectTimeout: any = null;
+
+onMounted(async () => {
+  await fetchData();
+  connectWebSocket();
+});
+
+onUnmounted(() => {
+  if (ws) {
+    ws.close();
+  }
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+});
+
+async function fetchData() {
+  isLoading.value = true;
+  try {
+    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    
+    // Fetch articles
+    const artRes = await fetch(`${apiBase}/api/articles`);
+    if (artRes.ok) {
+      knowledgeArticles.value = await artRes.json();
+    }
+    
+    // Fetch incidents
+    const incRes = await fetch(`${apiBase}/api/incidents`);
+    if (incRes.ok) {
+      incidentRepository.value = await incRes.json();
+    }
+  } catch (err) {
+    console.error('Error fetching data:', err);
+    notificationStore.addNotification({
+      title: 'Koneksi Eror',
+      message: 'Gagal terhubung ke server backend.',
+      type: 'error'
+    });
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+// WebSocket setup for real-time reactive updates
+function connectWebSocket() {
+  const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
+  
+  try {
+    ws = new WebSocket(wsUrl);
+    
+    ws.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'articles_updated' || data.event === 'tickets_updated') {
+          const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+          const artRes = await fetch(`${apiBase}/api/articles`);
+          if (artRes.ok) {
+            knowledgeArticles.value = await artRes.json();
+          }
+          const incRes = await fetch(`${apiBase}/api/incidents`);
+          if (incRes.ok) {
+            incidentRepository.value = await incRes.json();
+          }
+        }
+      } catch (e) {
+        console.error('[WS] Error processing real-time update:', e);
+      }
+    };
+    
+    ws.onclose = () => {
+      reconnectTimeout = setTimeout(connectWebSocket, 5000);
+    };
+  } catch (err) {
+    console.error('[WS] Connection error:', err);
+    reconnectTimeout = setTimeout(connectWebSocket, 5000);
+  }
+}
+
+// Compute dynamic stats
+const stats = computed(() => [
+  { label: "Total Articles", value: knowledgeArticles.value.length, change: "Artikel" },
+  { label: "Published", value: knowledgeArticles.value.filter((a) => a.status === "Published").length, change: "Aktif" },
+  { label: "Incidents Recorded", value: incidentRepository.value.length, change: "Kasus" },
+]);
+
+// Filtered articles list
+const filteredArticles = computed(() => {
+  return knowledgeArticles.value.filter(art => {
+    const query = searchQuery.value.toLowerCase();
+    const titleMatch = art.title.toLowerCase().includes(query) ||
+                       (art.tags && art.tags.toLowerCase().includes(query)) ||
+                       art.content.toLowerCase().includes(query);
+    
+    let categoryMatch = true;
+    if (selectedCategory.value !== 'all-category') {
+      categoryMatch = art.category === selectedCategory.value;
+    }
+    
+    let statusMatch = true;
+    if (selectedStatus.value !== 'all-status') {
+      statusMatch = art.status === selectedStatus.value;
+    }
+    
+    return titleMatch && categoryMatch && statusMatch;
+  });
+});
+
+// Trigger Custom Dialog
+function deleteArticle(id: string) {
+  articleIdToDelete.value = id;
+  showDeleteDialog.value = true;
+}
+
+// Confirmed Deletion from Dialog
+async function confirmDelete() {
+  if (!articleIdToDelete.value) return;
+  const id = articleIdToDelete.value;
+  showDeleteDialog.value = false;
+  isDeleting.value = id;
+  
+  try {
+    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const res = await fetch(`${apiBase}/api/articles/${id}`, {
+      method: 'DELETE'
+    });
+    
+    if (res.ok) {
+      notificationStore.addNotification({
+        title: 'Artikel Dihapus',
+        message: 'Artikel berhasil dihapus dari database.',
+        type: 'success'
+      });
+      await fetchData();
+    } else {
+      notificationStore.addNotification({
+        title: 'Gagal Menghapus',
+        message: 'Gagal menghapus artikel.',
+        type: 'error'
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    notificationStore.addNotification({
+      title: 'Eror Jaringan',
+      message: 'Gagal terhubung ke server.',
+      type: 'error'
+    });
+  } finally {
+    isDeleting.value = null;
+    articleIdToDelete.value = null;
+  }
+}
+
+function createNewArticle() {
+  router.push('/admin/knowledge/editor');
+}
+
+function editArticle(id: string) {
+  router.push(`/admin/knowledge/editor/${id}`);
+}
+
+function viewArticle(id: string) {
+  router.push(`/admin/knowledge/view/${id}`);
+}
+
+function viewOriginalTicket(ticketId: string) {
+  router.push(`/admin/tickets/${ticketId}`);
+}
+
+function convertIncidentToArticle(incident: any) {
+  router.push({
+    path: '/admin/knowledge/editor',
+    query: {
+      title: `Solusi: ${incident.title}`,
+      content: `### Deskripsi Incident:\n${incident.description}\n\n### Analisis Masalah:\n${incident.incidentNotes || ''}\n\n### Langkah-Langkah Solusi:\n1. [Tulis solusi di sini...]`,
+      category: incident.category,
+      relatedIncidentId: incident.id
+    }
+  });
+}
+
+function getTagsArray(tagsStr: string) {
+  if (!tagsStr) return [];
+  return tagsStr.split(',').map(t => t.trim()).filter(Boolean);
+}
+
+function formatDate(iso: string) {
+  if (!iso) return '-';
+  const d = new Date(iso.replace('Z', ''));
+  return d.toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+}
 </script>
 
 <template>
@@ -129,160 +257,82 @@ const stats = [
       <h2 class="text-2xl font-bold text-slate-900">Knowledge Management</h2>
       <p class="text-slate-600 mt-1">Kelola artikel, solusi, dan dokumentasi IT</p>
     </div>
-    <Dialog v-model:open="createDialogOpen">
-      <DialogTrigger asChild>
-        <Button class="bg-green-600 hover:bg-green-700">
-          <Plus class="w-4 h-4 mr-2" />
-          Create Article
-        </Button>
-      </DialogTrigger>
-      <DialogContent class="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Knowledge Article</DialogTitle>
-          <DialogDescription>
-            Buat artikel baru untuk knowledge base
-          </DialogDescription>
-        </DialogHeader>
-        <div class="space-y-4 mt-4">
-          <div class="space-y-2">
-            <Label>Article Title *</Label>
-            <Input placeholder="Contoh: Cara setup VPN untuk remote access" />
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-2">
-              <Label>Category *</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="network">Jaringan</SelectItem>
-                  <SelectItem value="account">Akun & Password</SelectItem>
-                  <SelectItem value="device">Perangkat</SelectItem>
-                  <SelectItem value="software">Software</SelectItem>
-                  <SelectItem value="infrastructure">Infrastruktur</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div class="space-y-2">
-              <Label>Status *</Label>
-              <Select defaultValue="draft">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="published">Published</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div class="space-y-2">
-            <Label>Tags (comma separated)</Label>
-            <Input placeholder="WiFi, Network, Connection" />
-          </div>
-          <div class="space-y-2">
-            <Label>Content *</Label>
-            <Textarea
-              placeholder="Tulis artikel dalam format markdown..."
-              rows="12"
-              class="font-mono text-sm"
-            />
-          </div>
-          <div class="space-y-2">
-            <Label>Related Incidents (optional)</Label>
-            <Select>
-              <SelectTrigger>
-                <SelectValue placeholder="Link to existing incident" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="incident in incidentRepository" :key="incident.id" :value="incident.id">
-                  {{ incident.title }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" @click="createDialogOpen = false">
-            Cancel
-          </Button>
-          <Button variant="outline">Save as Draft</Button>
-          <Button class="bg-green-600 hover:bg-green-700" @click="createDialogOpen = false">
-            Publish Article
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <Button class="bg-green-700 hover:bg-green-800 text-white font-bold gap-2 rounded-xl px-5 py-3 shadow-md" @click="createNewArticle">
+      <Plus class="w-4.5 h-4.5" />
+      Create Article
+    </Button>
   </div>
 
   <!-- Stats -->
-  <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
     <template v-if="isLoading">
-      <Card v-for="i in 4" :key="i">
+      <Card v-for="i in 3" :key="i" class="border border-slate-200/60 shadow-sm rounded-2xl bg-white">
         <CardContent class="pt-6">
           <div class="space-y-2">
-            <div class="h-4 w-24 bg-slate-200 animate-pulse rounded"></div>
-            <div class="h-8 w-16 bg-slate-200 animate-pulse rounded"></div>
+            <div class="h-4 w-24 bg-slate-200/60 animate-pulse rounded"></div>
+            <div class="h-8 w-16 bg-slate-200/60 animate-pulse rounded"></div>
           </div>
         </CardContent>
       </Card>
     </template>
     <template v-else>
-      <Card v-for="stat in stats" :key="stat.label">
-      <CardContent class="pt-6">
-        <p class="text-sm text-slate-600 mb-1">{{ stat.label }}</p>
-        <div class="flex items-baseline gap-2">
-          <p class="text-3xl font-bold text-slate-900">{{ stat.value }}</p>
-          <span class="text-sm font-medium text-green-600">{{ stat.change }}</span>
-        </div>
-      </CardContent>
-    </Card>
+      <Card v-for="stat in stats" :key="stat.label" class="border border-slate-200/60 shadow-sm rounded-2xl bg-white">
+        <CardContent class="pt-6">
+          <p class="text-sm text-slate-500 font-bold mb-1.5">{{ stat.label }}</p>
+          <div class="flex items-baseline gap-2">
+            <p class="text-3xl font-extrabold text-slate-900">{{ stat.value }}</p>
+            <span class="text-xs font-bold px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full">{{ stat.change }}</span>
+          </div>
+        </CardContent>
+      </Card>
     </template>
   </div>
 
   <!-- Tabs -->
   <Tabs defaultValue="articles" class="space-y-4">
-    <TabsList>
-      <TabsTrigger value="articles">
+    <TabsList class="bg-slate-100 p-1 rounded-xl">
+      <TabsTrigger value="articles" class="rounded-lg font-bold">
         Knowledge Articles ({{ knowledgeArticles.length }})
       </TabsTrigger>
-      <TabsTrigger value="incidents">
-        <FileWarning class="w-4 h-4 mr-2" />
+      <TabsTrigger value="incidents" class="rounded-lg font-bold gap-2">
+        <FileWarning class="w-4 h-4" />
         Incident Repository ({{ incidentRepository.length }})
       </TabsTrigger>
     </TabsList>
 
-    <TabsContent value="articles" class="space-y-4">
+    <!-- Knowledge Articles Tab -->
+    <TabsContent value="articles" class="space-y-4 outline-none">
       <!-- Search and Filter -->
-      <Card>
+      <Card class="border border-slate-200/60 shadow-sm bg-white rounded-2xl">
         <CardContent class="pt-6">
           <div class="grid md:grid-cols-4 gap-4">
             <div class="md:col-span-2">
               <div class="relative">
                 <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input placeholder="Cari artikel..." class="pl-10" />
+                <Input placeholder="Cari artikel berdasarkan judul atau tag..." class="pl-10 rounded-xl" v-model="searchQuery" />
               </div>
             </div>
-            <Select defaultValue="all-category">
-              <SelectTrigger>
+            <Select v-model="selectedCategory">
+              <SelectTrigger class="rounded-xl border-slate-200 font-semibold text-slate-800">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-category">Semua Kategori</SelectItem>
-                <SelectItem value="network">Jaringan</SelectItem>
-                <SelectItem value="account">Akun & Password</SelectItem>
-                <SelectItem value="device">Perangkat</SelectItem>
+                <SelectItem value="Jaringan">Jaringan</SelectItem>
+                <SelectItem value="Akun">Akun</SelectItem>
+                <SelectItem value="Perangkat">Perangkat</SelectItem>
+                <SelectItem value="Software">Software</SelectItem>
+                <SelectItem value="Infrastruktur">Infrastruktur</SelectItem>
               </SelectContent>
             </Select>
-            <Select defaultValue="all-status">
-              <SelectTrigger>
+            <Select v-model="selectedStatus">
+              <SelectTrigger class="rounded-xl border-slate-200 font-semibold text-slate-800">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-status">Semua Status</SelectItem>
-                <SelectItem value="published">Published</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
+                <SelectItem value="Published">Published</SelectItem>
+                <SelectItem value="Draft">Draft</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -291,199 +341,230 @@ const stats = [
 
       <!-- Articles Grid -->
       <div v-if="isLoading" class="grid md:grid-cols-2 gap-6">
-        <div v-for="i in 4" :key="i" class="h-64 bg-slate-100 animate-pulse rounded-xl w-full"></div>
+        <div v-for="i in 4" :key="i" class="h-64 bg-slate-100/50 animate-pulse rounded-2xl w-full border border-slate-200/30"></div>
+      </div>
+      <div v-else-if="filteredArticles.length === 0" class="text-center py-20 bg-white rounded-2xl border border-slate-200/60">
+        <BookOpen class="w-12 h-12 text-slate-300 mx-auto mb-3" />
+        <p class="font-bold text-slate-800">Tidak ada artikel ditemukan</p>
+        <p class="text-sm text-slate-500 mt-1">Coba sesuaikan kata kunci pencarian atau buat artikel baru.</p>
       </div>
       <div v-else class="grid md:grid-cols-2 gap-6">
-        <Card v-for="article in knowledgeArticles" :key="article.id" class="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div class="flex items-start justify-between mb-2">
-              <Badge variant="outline" class="bg-green-50 text-green-700 border-green-200">
-                {{ article.category }}
-              </Badge>
-              <Badge
-                variant="outline"
-                :class="[
-                  article.status === 'Published'
-                    ? 'bg-green-50 text-green-700 border-green-200'
-                    : 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                ]"
-              >
-                {{ article.status }}
-              </Badge>
-            </div>
-            <CardTitle class="text-lg">{{ article.title }}</CardTitle>
-            <CardDescription>
-              {{ article.id }} • By {{ article.author }}
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <!-- Tags -->
-            <div class="flex flex-wrap gap-2">
-              <Badge v-for="tag in article.tags" :key="tag" variant="outline" class="text-xs">
-                {{ tag }}
-              </Badge>
-            </div>
-
-            <!-- Stats -->
-            <div class="grid grid-cols-3 gap-4 py-3 border-y border-slate-200">
-              <div class="text-center">
-                <div class="flex items-center justify-center gap-1 mb-1">
-                  <Eye class="w-4 h-4 text-slate-500" />
-                  <p class="text-lg font-semibold text-slate-900">{{ article.views }}</p>
-                </div>
-                <p class="text-xs text-slate-500">Views</p>
+        <Card v-for="article in filteredArticles" :key="article.id" class="hover:shadow-md transition-shadow bg-white border border-slate-200/60 rounded-2xl overflow-hidden flex flex-col justify-between">
+          <div>
+            <CardHeader class="pb-3">
+              <div class="flex items-start justify-between mb-2">
+                <Badge variant="outline" class="bg-green-50 text-green-700 border-green-200/60 font-extrabold px-3 py-1 text-xs rounded-full shadow-sm">
+                  {{ article.category }}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  :class="[
+                    article.status === 'Published'
+                      ? 'bg-green-100 text-green-800 border-green-300'
+                      : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                  ]"
+                  class="font-extrabold text-xs px-2.5 py-0.5 rounded font-sans shadow-sm"
+                >
+                  {{ article.status }}
+                </Badge>
               </div>
-              <div class="text-center">
-                <div class="flex items-center justify-center gap-1 mb-1">
-                  <TrendingUp class="w-4 h-4 text-green-500" />
-                  <p class="text-lg font-semibold text-green-600">{{ article.helpful }}%</p>
-                </div>
-                <p class="text-xs text-slate-500">Helpful</p>
+              <!-- Clean aligned header font size -->
+              <CardTitle class="text-sm md:text-base font-semibold text-slate-900 leading-snug line-clamp-2 hover:text-green-700 cursor-pointer pt-1" @click="viewArticle(article.id)">
+                {{ article.title }}
+              </CardTitle>
+              <CardDescription class="text-sm text-slate-400 mt-1.5 font-medium">
+                By {{ article.author?.name || 'Admin IT' }} • {{ formatDate(article.createdAt) }}
+              </CardDescription>
+            </CardHeader>
+            
+            <CardContent class="space-y-4 pb-4">
+              <!-- Tags -->
+              <div class="flex flex-wrap gap-1.5" v-if="getTagsArray(article.tags).length > 0">
+                <Badge v-for="tag in getTagsArray(article.tags)" :key="tag" variant="secondary" class="text-sm bg-slate-100 text-slate-700 border border-slate-200 rounded-lg px-3.5 py-1.5 font-bold shadow-sm">
+                  {{ tag }}
+                </Badge>
               </div>
-              <div class="text-center">
-                <div class="flex items-center justify-center gap-1 mb-1">
-                  <CheckCircle class="w-4 h-4 text-green-500" />
-                  <p class="text-lg font-semibold text-green-600">{{ article.relatedTickets }}</p>
+              
+              <!-- Modern & Elegant View Pill Stats Bar -->
+              <div class="flex items-center justify-between py-2.5 border-t border-slate-100 mt-3 text-xs">
+                <div class="flex items-center gap-1.5 px-3.5 py-1.5 bg-green-50/50 border border-green-100/50 rounded-full text-green-800 font-extrabold shadow-sm">
+                  <Eye class="w-3.5 h-3.5 text-green-600 animate-pulse" />
+                  <span>{{ article.views }} Dibaca</span>
                 </div>
-                <p class="text-xs text-slate-500">Tickets</p>
+                <span class="text-slate-400 font-semibold">Diupdate: {{ formatDate(article.updatedAt) }}</span>
               </div>
-            </div>
+            </CardContent>
+          </div>
 
-            <!-- Dates -->
-            <div class="text-xs text-slate-500">
-              <p>Created: {{ article.createdDate }}</p>
-              <p>Updated: {{ article.updatedDate }}</p>
-            </div>
-
-            <!-- Actions -->
-            <div class="flex gap-2 pt-2">
-              <Button variant="outline" size="sm" class="flex-1">
-                <Eye class="w-4 h-4 mr-2" />
-                View
-              </Button>
-              <Button variant="outline" size="sm" class="flex-1">
-                <Edit class="w-4 h-4 mr-2" />
-                Edit
-              </Button>
-              <Button variant="ghost" size="sm">
-                <Trash2 class="w-4 h-4 text-red-600" />
-              </Button>
-            </div>
-          </CardContent>
+          <!-- Actions Footer (Bold explicit fonts) -->
+          <div class="px-6 pb-6 pt-2 border-t border-slate-50 bg-slate-50/20 flex gap-2">
+            <Button variant="outline" size="sm" class="flex-1 rounded-xl text-slate-800 border-slate-200 hover:bg-slate-100 font-bold border" @click="viewArticle(article.id)">
+              <Eye class="w-4 h-4 mr-2" />
+              View
+            </Button>
+            <Button variant="outline" size="sm" class="flex-1 rounded-xl text-slate-800 border-slate-200 hover:bg-slate-100 font-bold border" @click="editArticle(article.id)">
+              <Edit class="w-4 h-4 mr-2" />
+              Edit
+            </Button>
+            <Button variant="ghost" size="sm" class="rounded-xl hover:bg-red-50 text-red-600" :disabled="isDeleting === article.id" @click="deleteArticle(article.id)">
+              <Loader2 v-if="isDeleting === article.id" class="w-4 h-4 animate-spin text-red-600" />
+              <Trash2 v-else class="w-4 h-4" />
+            </Button>
+          </div>
         </Card>
       </div>
     </TabsContent>
 
-    <TabsContent value="incidents" class="space-y-4">
+    <!-- Incident Repository Tab -->
+    <TabsContent value="incidents" class="space-y-4 outline-none">
       <!-- Info Box -->
-      <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+      <div class="p-4 bg-red-50 border border-red-200 rounded-2xl">
         <div class="flex items-start gap-3">
           <AlertTriangle class="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
           <div>
-            <p class="font-medium text-red-900">Incident Repository</p>
-            <p class="text-sm text-red-800 mt-1">
-              Daftar tiket yang telah ditandai sebagai incident oleh admin. Incident ini dicatat untuk
-              pembelajaran dan referensi di masa depan dalam menangani kasus serupa.
+            <p class="font-bold text-red-900 text-sm">Incident Repository</p>
+            <p class="text-xs text-red-800 mt-1 leading-relaxed">
+              Daftar tiket yang telah ditandai sebagai incident oleh admin. Incident ini dicatat secara dinamis dari database untuk mempermudah perbaikan sistem, post-mortem, dan dokumentasi penyusunan solusi di Knowledge Base.
             </p>
           </div>
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Incident Repository</CardTitle>
+      <Card class="border border-slate-200/60 shadow-sm bg-white rounded-2xl">
+        <CardHeader class="border-b border-slate-100">
+          <CardTitle class="text-lg font-bold text-slate-900">Incident Repository</CardTitle>
           <CardDescription>
-            Catatan incident dari tiket yang telah ditangani
+            Catatan kasus dan incident aktif maupun resolved dari database
           </CardDescription>
         </CardHeader>
         
-        <div v-if="isLoading" class="space-y-4 px-6 pb-6">
-          <div v-for="i in 3" :key="i" class="h-[200px] bg-slate-100 animate-pulse rounded-xl w-full"></div>
+        <div v-if="isLoading" class="space-y-4 p-6">
+          <div v-for="i in 2" :key="i" class="h-[180px] bg-slate-100/50 animate-pulse rounded-2xl w-full border border-slate-200/30"></div>
         </div>
-        <CardContent v-else class="space-y-4">
-          <div v-for="incident in incidentRepository" :key="incident.id" class="p-4 border-2 border-red-200 rounded-lg hover:bg-red-50/50 transition-colors">
-            <div class="flex items-start justify-between mb-3">
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-2">
-                  <Badge class="bg-red-600 text-white">
-                    {{ incident.id }}
+        <CardContent v-else class="p-6 space-y-6">
+          <div v-for="incident in incidentRepository" :key="incident.id" class="p-5 border-2 border-red-100 rounded-2xl hover:bg-red-50/10 transition-colors space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <Badge class="bg-red-600 text-white font-extrabold px-2.5 py-1 rounded text-xs">
+                    INCIDENT
                   </Badge>
-                  <Badge variant="outline" class="bg-slate-50">
-                    Tiket {{ incident.ticketId }}
+                  <Badge variant="outline" class="bg-slate-50 text-slate-700 font-bold">
+                    Tiket {{ incident.id }}
                   </Badge>
                   <Badge
                     variant="outline"
                     :class="[
-                      incident.severity === 'Critical'
-                        ? 'bg-red-100 text-red-700 border-red-300'
-                        : incident.severity === 'High'
-                        ? 'bg-orange-100 text-orange-700 border-orange-300'
-                        : 'bg-yellow-100 text-yellow-700 border-yellow-300'
+                      incident.priority === 'High'
+                        ? 'bg-red-50 text-red-700 border-red-300'
+                        : incident.priority === 'Medium'
+                        ? 'bg-orange-50 text-orange-700 border-orange-300'
+                        : 'bg-yellow-50 text-yellow-700 border-yellow-300'
                     ]"
+                    class="font-extrabold text-xs rounded"
                   >
-                    {{ incident.severity }}
+                    {{ incident.priority }}
                   </Badge>
-                  <Badge variant="outline" class="bg-green-50 text-green-700 border-green-200">
+                  <Badge variant="outline" class="bg-green-50 text-green-700 border-green-200 font-extrabold px-3 py-1 text-xs rounded-full">
                     {{ incident.category }}
                   </Badge>
                 </div>
-                <h3 class="font-semibold text-slate-900 mb-1">{{ incident.title }}</h3>
-                <div class="flex items-center gap-4 text-xs text-slate-500">
-                  <span>Downtime: {{ incident.downtime }}</span>
+                <h3 class="font-extrabold text-slate-900 text-xl pt-1.5 leading-tight">{{ incident.title }}</h3>
+                <div class="flex items-center gap-4 text-xs text-slate-400 pt-1 font-semibold">
+                  <span>Pelapor: <strong>{{ incident.requester?.name || 'User' }}</strong></span>
                   <span>•</span>
-                  <span>Affected: {{ incident.affectedUsers }} users</span>
-                  <span>•</span>
-                  <span>By {{ incident.createdBy }}</span>
-                  <span>•</span>
-                  <span>{{ incident.createdDate }}</span>
+                  <span>Tanggal Masuk: {{ formatDate(incident.createdAt) }}</span>
                 </div>
               </div>
+              
+              <Badge 
+                :class="[
+                  incident.status === 'Resolved' || incident.status === 'Closed' 
+                    ? 'bg-green-100 text-green-800' 
+                    : 'bg-yellow-100 text-yellow-800'
+                ]" 
+                class="font-extrabold rounded-full self-start px-3 py-1 text-xs"
+              >
+                {{ incident.status }}
+              </Badge>
             </div>
 
-            <div class="space-y-3 text-sm mt-4">
-              <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <p class="font-medium text-slate-900 mb-1">📝 Incident Notes</p>
-                <p class="text-slate-700">{{ incident.incidentNotes }}</p>
+            <!-- Problem Details & Notes -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mt-3 pt-3 border-t border-slate-100">
+              <div class="p-3 bg-slate-50/80 rounded-xl border border-slate-200/40">
+                <p class="font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 bg-slate-500 rounded-full"></span>
+                  Detail Laporan Tiket
+                </p>
+                <p class="text-slate-600 line-clamp-3 text-xs leading-relaxed font-semibold">{{ incident.description }}</p>
               </div>
 
-              <div class="p-3 bg-green-50 rounded-lg border border-green-200">
-                <p class="font-medium text-green-900 mb-1">✅ Resolution</p>
-                <p class="text-green-800">{{ incident.resolution }}</p>
-              </div>
-
-              <div class="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                <p class="font-medium text-yellow-900 mb-1">🔍 Root Cause</p>
-                <p class="text-yellow-800">{{ incident.rootCause }}</p>
-              </div>
-
-              <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <p class="font-medium text-blue-900 mb-1">🛡️ Preventive Action</p>
-                <p class="text-blue-800">{{ incident.preventiveAction }}</p>
+              <div class="p-3 bg-red-50/20 rounded-xl border border-red-100/40">
+                <p class="font-bold text-red-900 mb-1 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                  Catatan Analisis Incident
+                </p>
+                <p class="text-slate-600 line-clamp-3 text-xs leading-relaxed font-semibold">
+                  {{ incident.incidentNotes || 'Belum ada catatan analisis incident tambahan dari admin.' }}
+                </p>
               </div>
             </div>
 
-            <div class="flex gap-2 mt-4 pt-4 border-t border-red-200">
-              <Button variant="outline" size="sm" class="flex-1">
-                <BookOpen class="w-4 h-4 mr-2" />
+            <!-- Action buttons -->
+            <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-100">
+              <Button variant="outline" size="sm" class="flex-1 rounded-xl text-green-800 hover:text-green-900 hover:bg-green-50 border-green-200 border gap-1.5 font-bold text-xs" @click="convertIncidentToArticle(incident)">
+                <Sparkles class="w-3.5 h-3.5" />
                 Convert to Knowledge Article
               </Button>
-              <Button variant="outline" size="sm" class="flex-1">
-                <Eye class="w-4 h-4 mr-2" />
+              <Button variant="outline" size="sm" class="flex-1 rounded-xl text-slate-800 border-slate-200 hover:bg-slate-100 font-bold border text-xs" @click="viewOriginalTicket(incident.id)">
+                <Eye class="w-3.5 h-3.5 mr-1.5" />
                 View Original Ticket
               </Button>
             </div>
           </div>
 
+          <!-- Empty State -->
           <div v-if="incidentRepository.length === 0" class="text-center py-12 text-slate-500">
             <FileWarning class="w-16 h-16 mx-auto mb-3 text-slate-300" />
-            <p class="font-medium">Belum ada incident yang dicatat</p>
-            <p class="text-sm mt-1">
-              Incident akan muncul di sini ketika admin menandai tiket sebagai incident
+            <p class="font-bold text-slate-800">Belum ada incident yang dicatat</p>
+            <p class="text-sm text-slate-500 mt-1">
+              Kasus incident akan muncul otomatis di sini ketika tiket ditandai sebagai incident oleh admin.
             </p>
           </div>
         </CardContent>
       </Card>
     </TabsContent>
   </Tabs>
+
+  <!-- Premium Custom Deletion Confirmation Dialog -->
+  <Dialog v-model:open="showDeleteDialog">
+    <DialogContent class="max-w-md rounded-2xl">
+      <DialogHeader class="flex flex-col items-center text-center">
+        <div class="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-3 border border-red-200/20">
+          <AlertTriangle class="w-6 h-6" />
+        </div>
+        <DialogTitle class="text-slate-900 text-lg font-bold">Hapus Artikel</DialogTitle>
+        <DialogDescription class="text-slate-500 text-sm mt-2">
+          Apakah Anda yakin ingin menghapus artikel ini? Artikel yang dihapus tidak dapat dipulihkan kembali.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="grid grid-cols-2 gap-2 mt-4">
+        <Button 
+          variant="outline" 
+          class="rounded-xl font-bold border-slate-200 text-slate-800" 
+          @click="showDeleteDialog = false"
+        >
+          Batal
+        </Button>
+        <Button 
+          variant="destructive" 
+          class="rounded-xl font-bold bg-red-600 hover:bg-red-700 text-white px-4 py-2"
+          @click="confirmDelete"
+        >
+          Hapus
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </div>
 </template>

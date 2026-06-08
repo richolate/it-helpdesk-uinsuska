@@ -5,7 +5,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { startBot, sendGroupMessage, sendGroupPhoto, onTicketResolved } from './bot';
 import { db } from './db';
-import { tickets, users, comments, auditLogs } from './db/schema';
+import { tickets, users, comments, auditLogs, articles, articleViews } from './db/schema';
 import { eq, desc, asc } from 'drizzle-orm';
 
 
@@ -390,6 +390,192 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
+// 8c. GET ALL ARTICLES
+app.get('/api/articles', async (req, res) => {
+  try {
+    const { category, status } = req.query;
+    
+    const allArticles = await db.query.articles.findMany({
+      where: (art, { eq, and }) => {
+        const conds = [];
+        if (category && category !== 'Semua' && category !== 'all') {
+          conds.push(eq(art.category, category as string));
+        }
+        if (status) {
+          conds.push(eq(art.status, status as string));
+        }
+        return conds.length > 0 ? and(...conds) : undefined;
+      },
+      orderBy: [desc(articles.createdAt)],
+      with: {
+        author: true,
+        relatedIncident: true,
+      }
+    });
+    res.json(allArticles);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch articles' });
+  }
+});
+
+// 8d. GET SINGLE ARTICLE
+app.get('/api/articles/:id', async (req, res) => {
+  try {
+    const articleId = req.params.id;
+    const { userNimNip } = req.query;
+    
+    const article = await db.query.articles.findFirst({
+      where: eq(articles.id, articleId),
+      with: {
+        author: true,
+        relatedIncident: true
+      }
+    });
+    
+    if (!article) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+    
+    let currentViews = article.views;
+    
+    // 1 account 1x view logic
+    if (userNimNip) {
+      const user = await getUserByNimNip(userNimNip as string);
+      if (user) {
+        // Check if this user has viewed this article before
+        const existingView = await db.query.articleViews.findFirst({
+          where: (av, { and, eq }) => and(
+            eq(av.articleId, articleId),
+            eq(av.userId, user.id)
+          )
+        });
+        
+        if (!existingView) {
+          // Record view in database
+          await db.insert(articleViews).values({
+            articleId,
+            userId: user.id
+          });
+          
+          // Increment views in article table
+          currentViews += 1;
+          await db.update(articles)
+            .set({ views: currentViews })
+            .where(eq(articles.id, articleId));
+        }
+      }
+    }
+      
+    res.json({ ...article, views: currentViews });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch article' });
+  }
+});
+
+// 8e. CREATE ARTICLE
+app.post('/api/articles', async (req, res) => {
+  try {
+    const { title, content, category, tags, relatedIncidentId, status, coverImage, authorNimNip } = req.body;
+    const author = await getUserByNimNip(authorNimNip);
+    if (!author) {
+      return res.status(404).json({ error: 'Author not found' });
+    }
+    
+    const newArticle = {
+      title,
+      content,
+      category,
+      tags: tags || null,
+      relatedIncidentId: relatedIncidentId || null,
+      status: status || 'Draft',
+      coverImage: coverImage || null,
+      authorId: author.id,
+      views: 0,
+    };
+    
+    const [inserted] = await db.insert(articles).values(newArticle).returning();
+    broadcast({ event: 'articles_updated', type: 'create', id: inserted.id });
+    res.json({ success: true, article: inserted });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create article' });
+  }
+});
+
+// 8f. UPDATE ARTICLE
+app.put('/api/articles/:id', async (req, res) => {
+  try {
+    const articleId = req.params.id;
+    const { title, content, category, tags, relatedIncidentId, status, coverImage } = req.body;
+    
+    const existing = await db.query.articles.findFirst({
+      where: eq(articles.id, articleId)
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+    
+    await db.update(articles)
+      .set({
+        title,
+        content,
+        category,
+        tags: tags || null,
+        relatedIncidentId: relatedIncidentId || null,
+        status: status || existing.status,
+        coverImage: coverImage !== undefined ? coverImage : existing.coverImage,
+        updatedAt: new Date(),
+      })
+      .where(eq(articles.id, articleId));
+      
+    broadcast({ event: 'articles_updated', type: 'update', id: articleId });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update article' });
+  }
+});
+
+// 8g. DELETE ARTICLE
+app.delete('/api/articles/:id', async (req, res) => {
+  try {
+    const articleId = req.params.id;
+    const existing = await db.query.articles.findFirst({
+      where: eq(articles.id, articleId)
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+    
+    await db.delete(articles).where(eq(articles.id, articleId));
+    broadcast({ event: 'articles_updated', type: 'delete', id: articleId });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete article' });
+  }
+});
+
+// 8h. GET INCIDENTS
+app.get('/api/incidents', async (req, res) => {
+  try {
+    const allIncidents = await db.query.tickets.findMany({
+      where: eq(tickets.isIncident, true),
+      orderBy: [desc(tickets.updatedAt)],
+      with: {
+        requester: true,
+        assignee: true,
+      }
+    });
+    res.json(allIncidents);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch incidents' });
+  }
+});
+
 // 9. PERFORMANCE METRICS
 app.get('/api/performance', async (req, res) => {
   try {
@@ -582,7 +768,91 @@ async function seedDatabase() {
       for (const u of seedUsers) {
         await db.insert(users).values(u);
       }
-      console.log('✅ Seeding completed successfully!');
+      console.log('✅ Seeding users completed successfully!');
+    }
+
+    // Seed default articles if empty
+    const articleList = await db.select().from(articles);
+    if (articleList.length === 0) {
+      console.log('🌱 Seeding default dummy articles...');
+      const adminUser = await db.query.users.findFirst({
+        where: eq(users.role, 'Admin IT')
+      });
+      if (adminUser) {
+        const seedArticles = [
+          {
+            title: 'Cara mengatasi tidak bisa connect ke WiFi kampus',
+            content: `Berikut adalah langkah-langkah troubleshooting jika Anda mengalami kendala saat menghubungkan perangkat ke WiFi kampus:
+
+1. **Pastikan Wi-Fi Aktif**: Periksa tombol fisik atau pengaturan software pada perangkat Anda untuk memastikan Wi-Fi dalam keadaan aktif.
+2. **Forget Network**: Hapus jaringan wifi lama 'Univ-WiFi' dari daftar jaringan tersimpan, lalu coba hubungkan kembali.
+3. **Gunakan Akun iRaise**: Masukkan username dan password iRaise Anda dengan benar. NIM untuk mahasiswa, dan NIP untuk dosen/pegawai.
+4. **Sertifikat Keamanan**: Jika muncul peringatan keamanan sertifikat (Certificate Trust), klik 'Trust' atau 'Terima' untuk melanjutkan koneksi.
+5. **Daftarkan Perangkat**: Pastikan perangkat Anda sudah didaftarkan pada portal IT Helpdesk jika sistem mewajibkan registrasi MAC address.
+
+Jika langkah-langkah di atas belum menyelesaikan masalah, silakan ajukan tiket bantuan ke IT Helpdesk agar tim teknisi kami dapat melakukan pengecekan lebih lanjut.`,
+            category: 'Jaringan',
+            tags: 'WiFi, Network, Connection',
+            status: 'Published',
+            views: 1254,
+            authorId: adminUser.id,
+          },
+          {
+            title: 'Reset password akun iRaise secara mandiri',
+            content: `Lupa password akun iRaise Anda? Berikut cara melakukan reset secara mandiri dengan cepat:
+
+1. Buka halaman portal login iRaise di browser Anda.
+2. Klik link **"Lupa Password?"** atau **"Reset Password"** di bawah tombol login.
+3. Masukkan NIM (Mahasiswa) atau NIP (Dosen/Pegawai) Anda serta alamat email alternatif yang terdaftar di sistem.
+4. Periksa kotak masuk email Anda (termasuk folder spam jika tidak ada di inbox). Buka email verifikasi dari sistem dan klik link reset password.
+5. Masukkan password baru Anda yang kuat (minimal 8 karakter, kombinasi huruf besar, huruf kecil, angka, dan simbol).
+6. Selesai! Anda kini bisa login menggunakan password baru tersebut.
+
+*Catatan: Jika email alternatif Anda tidak aktif atau tidak terdaftar, Anda harus mengunjungi kantor IT Helpdesk dengan membawa KTM/KTP untuk verifikasi identitas secara langsung.*`,
+            category: 'Akun',
+            tags: 'Password, Account, iRaise',
+            status: 'Published',
+            views: 892,
+            authorId: adminUser.id,
+          },
+          {
+            title: 'Panduan troubleshooting perangkat laptop tidak terdeteksi',
+            content: `Jika laptop Anda tidak terdeteksi atau tidak mendapatkan IP Address dari jaringan kabel/LAN kampus:
+
+1. **Periksa Kabel LAN**: Pastikan kabel LAN terpasang dengan erat pada port RJ45 di laptop Anda dan di wall outlet ruangan.
+2. **Restart Network Adapter**: Masuk ke Control Panel -> Network and Internet -> Network Connections. Klik kanan pada Ethernet adapter Anda, pilih Disable, tunggu beberapa detik, lalu klik Enable kembali.
+3. **Atur IP ke DHCP**: Pastikan pengaturan IP address dan DNS server diatur ke otomatis (Obtain an IP address automatically).
+4. **Daftarkan MAC Address**: Masuk ke portal IT Support, daftarkan MAC address Ethernet laptop Anda.
+5. **Coba Kabel/Port Lain**: Jika memungkinkan, coba gunakan kabel LAN lain atau hubungkan ke port wall outlet yang berbeda untuk memastikan letak kerusakannya.`,
+            category: 'Perangkat',
+            tags: 'Laptop, Network, Hardware',
+            status: 'Published',
+            views: 643,
+            authorId: adminUser.id,
+          },
+          {
+            title: 'Konfigurasi VPN untuk akses jarak jauh (Work from Home)',
+            content: `Panduan ini ditujukan untuk dosen dan staf yang perlu mengakses server internal kampus atau aplikasi repositori dari luar area kampus:
+
+1. Unduh aplikasi client VPN resmi yang disediakan IT Support.
+2. Install aplikasi tersebut di perangkat komputer atau laptop Anda.
+3. Jalankan aplikasi, kemudian masukkan alamat server VPN kampus: \`vpn.uin-suska.ac.id\`.
+4. Masukkan username dan password akun pegawai Anda.
+5. Tekan tombol **Connect**. Setelah status berubah menjadi Connected, Anda sudah bisa mengakses sistem akademik internal seperti biasa.
+
+*Penting: Selalu putuskan koneksi VPN (Disconnect) jika Anda sudah selesai bekerja untuk menjaga keamanan jaringan internal kampus.*`,
+            category: 'Jaringan',
+            tags: 'VPN, Remote Access, Security',
+            status: 'Draft',
+            views: 0,
+            authorId: adminUser.id,
+          }
+        ];
+        for (const a of seedArticles) {
+          await db.insert(articles).values(a);
+        }
+        console.log('✅ Seeding articles completed successfully!');
+      }
     }
   } catch (error) {
     console.error('❌ Failed to seed database:', error);
